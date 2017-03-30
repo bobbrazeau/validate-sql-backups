@@ -5,9 +5,6 @@ It then generates new physical location for all files based on the database name
 Using that information it will restore the database moving/relocating  to the new locations
 Then it will run DBCC CheckDB to detect any corruption.
 Finally it will drop the new database and start the process over for any other backup files.
-
-First check-in:
-This is more or less the minimum needed for the core functionality.  More functionality to come but it runs.
 #>
 cls
 import-module "SQLPS" -DisableNameChecking
@@ -81,7 +78,12 @@ function restoreVerifyDropDatabase($ServerName, $databaseName, $backupname, $fil
     $db = $sqlsvr.Databases[$databaseName]  
     $db.Drop()  
 }
-
+function checkForDatabase($ServerName, $databaseName){
+    $sqlsvr = new-object Microsoft.SqlServer.Management.Smo.Server($ServerName)
+    $exists = 0
+    if ( $null -ne $sqlsvr.Databases[$databaseName] ) { $exists = 1 } else { $exists = 0 }  
+    return $exists
+}
  
 $ServerName = "WIN-3J398F4GRU4"
 $databaseName = "dbCheck"
@@ -95,24 +97,27 @@ $logDriveAvailableSpace = $FSO.getdrive($(Split-Path $newLogPath -Qualifier)).Av
 $dataDriveAvailableSpace = $FSO.getdrive($(Split-Path $newDataPath -Qualifier)).AvailableSpace  - $freeSpaceBuffer 
 
 
-$folders = Get-ChildItem -Recurse $backupRoot | ?{ $_.PSIsContainer }
-foreach ($subfolder in $folders){
-    $f = $backupRoot + $subfolder
-    $file = gci $f -Filter "*.bak" -recurse | sort LastWriteTime | select -last 1
-    $backupname = $f + "\" + $file
+$x =checkForDatabase $ServerName $databaseName
+if ($x -eq 0) {
 
-    $backupInfo = getBackupInfo $ServerName $databaseName $backupname $newDataPath $newLogPath
-    restoreVerifyDropDatabase $ServerName $databaseName $backupname $backupInfo
+    $folders = Get-ChildItem -Recurse $backupRoot | ?{ $_.PSIsContainer }
+    foreach ($subfolder in $folders){
+        $f = $backupRoot + $subfolder
+        $file = gci $f -Filter "*.bak" -recurse | sort LastWriteTime | select -last 1
+        $backupname = $f + "\" + $file
+
+        $backupInfo = getBackupInfo $ServerName $databaseName $backupname $newDataPath $newLogPath
+        restoreVerifyDropDatabase $ServerName $databaseName $backupname $backupInfo
+    }
+} else {
+"fail, db exists"
 }
-
 
 #$error[0] | format-list -force
 
 <#
 TODO:
     get available space per drive to verify enough free space + buffer exists
-    Check if DB name exists prior to starting - maybe try appending a 1, then 2 then 3 to name if all fail, fail app
-        Name of DB we use doesnt matter as long as its not in use.
     Log information - create a table and save results
     Error handling, try catch blocks
     Review PS best practices around formatting, naming etc.
