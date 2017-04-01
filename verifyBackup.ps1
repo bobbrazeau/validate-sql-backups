@@ -70,36 +70,51 @@ function restoreVerifyDropDatabase($ServerName, $databaseName, $backupname, $fil
     $dbccResults = Invoke-SQLCmd -ServerInstance $ServerName -Query $dbccQuery
 
     if ($dbccResults.length -eq 0){
-        Write-Host " We have only information messages, do nothing"
+        Write-Host " We have only information messages, do nothing" + $backupname
     }else{
-        Write-Host "We have error records, do something."
+        Write-Host "We have error records, do something." + $backupname
     }
     $db = New-Object -TypeName Microsoft.SqlServer.Management.Smo.Database -argumentlist $ServerName, $databaseName  
     $db = $sqlsvr.Databases[$databaseName]  
     $db.Drop()  
 }
-function checkForDatabase($ServerName, $databaseName){
+function checkIfDatabaseExists($ServerName, $databaseName){
     $sqlsvr = new-object Microsoft.SqlServer.Management.Smo.Server($ServerName)
     $exists = 0
     if ( $null -ne $sqlsvr.Databases[$databaseName] ) { $exists = 1 } else { $exists = 0 }  
     return $exists
 }
- 
+function checkFreeSpace($logPath, $dataPath, $logUsed, $dataUsed, $buffer){
+    #Cleanup should remove the db, but there could be other activity on the drive so recalc each time
+    $FSO = New-Object -Com Scripting.FileSystemObject
+    $logInfo = $FSO.getdrive($(Split-Path $logPath -Qualifier))
+    $logSpace = $logInfo.AvailableSpace - $buffer
+
+    $dataInfo = $FSO.getdrive($(Split-Path $dataPath -Qualifier)) 
+    $dataSpace = $dataInfo.AvailableSpace  - $buffer 
+    if($logInfo.DriveLetter -eq $dataInfo.DriveLetter){
+        $dataSpace = $dataSpace - $LogUsed - $dataUsed - $buffer
+    } else {
+        $logSpace = $logSpace - $logUsed - $buffer
+        $dataSpace = $dataSpace - $dataUsed - $buffer
+    }
+    $ret = 0 
+    if($logSpace -gt 0 -And $dataSpace -gt 0){
+        $ret = 1
+    }
+    return $ret
+}
+
 $ServerName = "WIN-3J398F4GRU4"
-$databaseName = "dbCheck"
+$databaseName = "checkdb"
 $newDataPath = "B:\Backups\testing\"
 $newLogPath = "B:\Backups\testing\"
 $backupRoot =  "B:\Backups\testing\"
 
-$freeSpaceBuffer = 200*1024*1024 
-$FSO = New-Object -Com Scripting.FileSystemObject
-$logDriveAvailableSpace = $FSO.getdrive($(Split-Path $newLogPath -Qualifier)).AvailableSpace - $freeSpaceBuffer
-$dataDriveAvailableSpace = $FSO.getdrive($(Split-Path $newDataPath -Qualifier)).AvailableSpace  - $freeSpaceBuffer 
 
-
-$x =checkForDatabase $ServerName $databaseName
-if ($x -eq 0) {
-
+$freeSpaceBuffer = 200*1024*1024 #200 MB to spare
+$exists = checkIfDatabaseExists $ServerName $databaseName
+if ($exists -eq 0) {
     $folders = Get-ChildItem -Recurse $backupRoot | ?{ $_.PSIsContainer }
     foreach ($subfolder in $folders){
         $f = $backupRoot + $subfolder
@@ -107,18 +122,22 @@ if ($x -eq 0) {
         $backupname = $f + "\" + $file
 
         $backupInfo = getBackupInfo $ServerName $databaseName $backupname $newDataPath $newLogPath
-        restoreVerifyDropDatabase $ServerName $databaseName $backupname $backupInfo
+
+        $free = checkFreeSpace $newLogPath $newDataPath $fileInfo.LogSize $fileInfo.DataSize $freeSpaceBuffer
+        if ($free -eq 1){
+            restoreVerifyDropDatabase $ServerName $databaseName $backupname $backupInfo
+        } else {
+            "error not enough free space"
+        }
     }
 } else {
-"fail, db exists"
+"fail, db already exists"
 }
-
 #$error[0] | format-list -force
 
 <#
-TODO:
-    get available space per drive to verify enough free space + buffer exists
-    Log information - create a table and save results
+TODO
+     Log information - create a table and save results
     Error handling, try catch blocks
     Review PS best practices around formatting, naming etc.
 #>
