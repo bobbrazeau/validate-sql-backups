@@ -105,6 +105,91 @@ function checkFreeSpace($logPath, $dataPath, $logUsed, $dataUsed, $buffer){
     return $ret
 }
 
+####
+# Adding 3 functions to make calls to Stored Procs to begin DB logging, add each DB as it runs then finalize the main record
+# These aren't tested as the table + SPs have to be written.
+# Research if there is a way to abstract this into a generic function to reduce repetition.
+####
+function LoggingInit($loggingServer, $loggingDB, $serverVerified){
+    $SqlConnection = New-Object System.Data.SqlClient.SqlConnection
+    $SqlConnection.ConnectionString = "Server=" + $loggingServer + ";Database=" + $loggingDB + ";Integrated Security=True"
+    $SqlCmd = New-Object System.Data.SqlClient.SqlCommand
+    $SqlCmd.CommandText = $loggingDB + ".dbo.LogStart"
+    $SqlCmd.Connection = $SqlConnection
+    $SqlCmd.CommandType = [System.Data.CommandType]'StoredProcedure';
+
+    $inParameter = new-object System.Data.SqlClient.SqlParameter;
+    $inParameter.ParameterName = "@serverName";
+    $inParameter.Direction = [System.Data.ParameterDirection]'Input';
+    $inParameter.DbType = [System.Data.DbType]'String';
+    $inParameter.Size = 255;
+    $inParameter.Value = $serverVerified;
+    $SqlCmd.Parameters.Add($inParameter) >> $null;
+
+    $outParameter = new-object System.Data.SqlClient.SqlParameter;
+    $outParameter.ParameterName = "@id";
+    $outParameter.Direction = [System.Data.ParameterDirection]'Output';
+    $outParameter.DbType = [System.Data.DbType]'Int32';
+    $SqlCmd.Parameters.Add($outParameter) >> $null;
+
+    $SqlConnection.Open();
+    $result = $SqlCmd.ExecuteNonQuery();
+    $returnID = $SqlCmd.Parameters["@id"].Value;
+    $SqlConnection.Close();
+    return $returnID;
+}
+
+function LoggingDB($loggingServer, $loggingDB, $serverVerified, $logID, $db){
+    $SqlConnection = New-Object System.Data.SqlClient.SqlConnection
+    $SqlConnection.ConnectionString = "Server=" + $loggingServer + ";Database=" + $loggingDB + ";Integrated Security=True"
+    $SqlCmd = New-Object System.Data.SqlClient.SqlCommand
+    $SqlCmd.CommandText = $loggingDB + ".dbo.LogAddDB"
+    $SqlCmd.Connection = $SqlConnection
+    $SqlCmd.CommandType = [System.Data.CommandType]'StoredProcedure';
+
+    $inParameter = new-object System.Data.SqlClient.SqlParameter;
+    $inParameter.ParameterName = "@LogID";
+    $inParameter.Direction = [System.Data.ParameterDirection]'Input';
+    $inParameter.DbType = [System.Data.DbType]'Int32';
+    $inParameter.Value = $logID;
+    $SqlCmd.Parameters.Add($inParameter) >> $null;
+
+    $inParameter2 = new-object System.Data.SqlClient.SqlParameter;
+    $inParameter2.ParameterName = "@LoggingID";
+    $inParameter2.Direction = [System.Data.ParameterDirection]'Input';
+    $inParameter2.DbType = [System.Data.DbType]'string';
+    $inParameter2.size = 255;
+    $inParameter2.Value = $db;
+    $SqlCmd.Parameters.Add($inParameter2) >> $null;
+
+    $SqlConnection.Open();
+    $result = $SqlCmd.ExecuteNonQuery();
+    $returnID = $SqlCmd.Parameters["@id"].Value;
+    $SqlConnection.Close();
+}
+
+function LoggingFinalize($loggingServer, $loggingDB, $serverVerified, $logID){
+    $SqlConnection = New-Object System.Data.SqlClient.SqlConnection
+    $SqlConnection.ConnectionString = "Server=" + $loggingServer + ";Database=" + $loggingDB + ";Integrated Security=True"
+    $SqlCmd = New-Object System.Data.SqlClient.SqlCommand
+    $SqlCmd.CommandText = $loggingDB + ".dbo.LogFinalize"
+    $SqlCmd.Connection = $SqlConnection
+    $SqlCmd.CommandType = [System.Data.CommandType]'StoredProcedure';
+
+    $inParameter = new-object System.Data.SqlClient.SqlParameter;
+    $inParameter.ParameterName = "@LogID";
+    $inParameter.Direction = [System.Data.ParameterDirection]'Input';
+    $inParameter.DbType = [System.Data.DbType]'Int32';
+    $inParameter.Value = $logID;
+    $SqlCmd.Parameters.Add($inParameter) >> $null;
+
+    $SqlConnection.Open();
+    $result = $SqlCmd.ExecuteNonQuery();
+    $returnID = $SqlCmd.Parameters["@id"].Value;
+    $SqlConnection.Close();
+}
+
+
 $ServerName = "WIN-3J398F4GRU4"
 $databaseName = "checkdb"
 $newDataPath = "B:\Backups\testing\"
