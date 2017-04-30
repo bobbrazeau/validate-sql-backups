@@ -76,7 +76,7 @@ function restoreVerifyDropDatabase($ServerName, $oldDbName, $backupname, $fileIn
     $errorCount = 0 -as [int]
 
     $dbccQuery = "DBCC CHECKDB ([" + $restoreDbName.ToString() + "]) WITH TABLERESULTS, NO_INFOMSGS"
-    $dbccResults = Invoke-SQLCmd -ServerInstance $ServerName -Query $dbccQuery
+    $dbccResults = Invoke-SQLCmd -ServerInstance $ServerName -Query $dbccQuery -querytimeout ([int]::MaxValue)
     
     if ($dbccResults.length -ne 0){
         $errorCount = 1 #DBCC output something ergo, errors.
@@ -223,9 +223,9 @@ function LoggingFinalize($serverName, $loggingDB, $logID){
 $ServerName = "(local)"
 $friendlyServerName = "Test Server" #useful if multiple servers exist
 $restoreDbName = "checkdb"
-$restoreDataPath = "B:\Backups\testing\"
-$restoreLogPath = "B:\Backups\testing\"
-$backupSource =  "B:\Backups\testing\"
+$restoreDataPath = "Y:\"
+$restoreLogPath = "Y:\"
+$backupSource =  "Y:\Weekly Full\"
 $loggingDB = "loggingDBCC"
 $freeSpaceBuffer = 200*1024*1024 #200 MB to spare
 
@@ -270,6 +270,10 @@ foreach ($subfolder in $folders){
         #Get the most recent backup file from each subfolder
         $f = $backupSource + $subfolder
         $file = Get-ChildItem $f -Filter "*.bak" -recurse | sort LastWriteTime | select -last 1
+        
+        if($file -eq $null){
+            continue
+        }
         $backupFile = $f + "\" + $file
 
         $logStart = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
@@ -277,7 +281,7 @@ foreach ($subfolder in $folders){
         $backupInfo = getBackupInfo $ServerName $restoreDbName $backupFile $restoreDataPath $restoreLogPath
         
         $oldDbName = $backupInfo[0].LogicalName
-
+        $oldDbName
         $free = checkFreeSpace $restoreLogPath $restoreDataPath $backupInfo.LogSize $backupInfo.DataSize $freeSpaceBuffer
         if ($free -eq 1){
             $errorCount = restoreVerifyDropDatabase $ServerName $oldDbName $backupFile $backupInfo $restoreDbName
@@ -311,6 +315,4 @@ LoggingFinalize $serverName $loggingDB $logID
 TODO
     Error handling, try catch blocks
     Review PS best practices around formatting, naming etc.
-    Add server name / source location to an array so multiple servers can be verified
-    Test UNC paths
 #>
