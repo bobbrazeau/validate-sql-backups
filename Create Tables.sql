@@ -1,7 +1,7 @@
 USE [loggingDBCC]
 GO
 
-/****** Object:  Table [dbo].[dbccLogDetail]    Script Date: 4/29/2017 4:25:16 PM ******/
+/****** Object:  Table [dbo].[dbccLogDetail]    Script Date: 5/14/2017 11:49:28 AM ******/
 SET ANSI_NULLS ON
 GO
 
@@ -12,8 +12,9 @@ CREATE TABLE [dbo].[dbccLogDetail](
 	[id] [int] IDENTITY(1,1) NOT NULL,
 	[masterID] [int] NOT NULL,
 	[databaseName] [nvarchar](255) NOT NULL,
+	[filePath] [nvarchar](255) NOT NULL,
 	[errors] [smallint] NOT NULL,
-	[errMsg] [nvarchar](4000) NULL,
+	[errMsg] [nvarchar](4000) NOT NULL,
 	[startTime] [datetime] NOT NULL,
 	[endTime] [datetime] NULL,
  CONSTRAINT [PK_loggingDetail] PRIMARY KEY CLUSTERED 
@@ -24,7 +25,7 @@ CREATE TABLE [dbo].[dbccLogDetail](
 
 GO
 
-/****** Object:  Table [dbo].[dbccLogMaster]    Script Date: 4/29/2017 4:25:16 PM ******/
+/****** Object:  Table [dbo].[dbccLogMaster]    Script Date: 5/14/2017 11:49:29 AM ******/
 SET ANSI_NULLS ON
 GO
 
@@ -34,6 +35,7 @@ GO
 CREATE TABLE [dbo].[dbccLogMaster](
 	[id] [int] IDENTITY(1,1) NOT NULL,
 	[ServerName] [nvarchar](255) NOT NULL,
+	[checkedDBs] [int] NOT NULL,
 	[errors] [int] NOT NULL,
 	[startTime] [datetime] NOT NULL,
 	[endTime] [datetime] NULL,
@@ -46,6 +48,9 @@ CREATE TABLE [dbo].[dbccLogMaster](
 GO
 
 ALTER TABLE [dbo].[dbccLogDetail] ADD  CONSTRAINT [DF_loggingDetail_startTime]  DEFAULT (getdate()) FOR [startTime]
+GO
+
+ALTER TABLE [dbo].[dbccLogMaster] ADD  CONSTRAINT [DF_dbccLogMaster_checkedDBs]  DEFAULT ((0)) FOR [checkedDBs]
 GO
 
 ALTER TABLE [dbo].[dbccLogMaster] ADD  CONSTRAINT [DF_loggingMaster_startTime]  DEFAULT (getdate()) FOR [startTime]
