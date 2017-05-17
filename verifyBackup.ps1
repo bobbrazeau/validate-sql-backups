@@ -12,7 +12,21 @@ Finally it will drop the new database and start the process over for any other b
 
 #>
 cls
+$error.clear()
 import-module "SQLPS" -DisableNameChecking
+
+
+#Set Enviroment Variables
+$ServerName = "(local)"
+$restoreDataPath = "B:\backupFolderData\"
+$restoreLogPath = "B:\backupFolderLog\"
+$restoreDbName = "checkdb"
+$loggingDB = "loggingDBCC"
+$freeSpaceBuffer = 200*1024*1024 #200 MB to spare
+
+#Restore info - If an array is used, each source can have its own name
+$backupSource =  "B:\"
+$friendlyServerName = "Test Server" #useful if multiple servers exist
 
 function getBackupInfo($ServerName, $restoreDbName, $backupName, $restoreDataPath, $restoreLogPath) {
     #Restore database to get current logical and physical file info.  Create new physical path based on path variables
@@ -140,7 +154,7 @@ function LoggingInit($serverName, $loggingDB, $sourceServerName){
     return $returnID;
 }
 
-function LoggingDB($serverName, $loggingDB, $logID, $dbName, $errors, $errorMsg, $logStart, $logEnd){
+function LoggingDB($serverName, $loggingDB, $backupFile, $logID, $dbName, $errors, $errorMsg, $logStart, $logEnd){
     $SqlConnection = New-Object System.Data.SqlClient.SqlConnection
     $SqlConnection.ConnectionString = "Server=" + $serverName + ";Database=" + $loggingDB + ";Integrated Security=True"
     $SqlCmd = New-Object System.Data.SqlClient.SqlCommand
@@ -162,6 +176,14 @@ function LoggingDB($serverName, $loggingDB, $logID, $dbName, $errors, $errorMsg,
     $inDBName.size = 255;
     $inDBName.Value = $dbName;
     $SqlCmd.Parameters.Add($inDBName) >> $null;
+
+    $inDBPath = new-object System.Data.SqlClient.SqlParameter;
+    $inDBPath.ParameterName = "@filePath";
+    $inDBPath.Direction = [System.Data.ParameterDirection]'Input';
+    $inDBPath.DbType = [System.Data.DbType]'string';
+    $inDBPath.size = 255;
+    $inDBPath.Value = $backupFile;
+    $SqlCmd.Parameters.Add($inDBPath) >> $null;
 
     $inErrors = new-object System.Data.SqlClient.SqlParameter;
     $inErrors.ParameterName = "@errors";
@@ -218,17 +240,6 @@ function LoggingFinalize($serverName, $loggingDB, $logID){
     $SqlConnection.Close();
 }
 
-#Set Enviroment Variables
-
-$ServerName = "(local)"
-$friendlyServerName = "Test Server" #useful if multiple servers exist
-$restoreDbName = "checkdb"
-$restoreDataPath = "Y:\"
-$restoreLogPath = "Y:\"
-$backupSource =  "Y:\Weekly Full\"
-$loggingDB = "loggingDBCC"
-$freeSpaceBuffer = 200*1024*1024 #200 MB to spare
-
 
 ##
 # Check out the enviroment - make sure the server can be connected and the folders exist.
@@ -251,7 +262,7 @@ elseif($sqlsvr.Databases[$loggingDB] -eq $null)
     exit
 } elseif((Test-Path $restoreDataPath) -eq $false)
 {
-    write-output "Restore Datafile destination does not exists.  Exiting"
+    write-output "Restore Datafile [$restoreDataPath] destination does not exists.  Exiting"
     exit
 } elseif((Test-Path $restoreLogPath) –eq $false)
 {
@@ -265,11 +276,12 @@ elseif($sqlsvr.Databases[$loggingDB] -eq $null)
 
 $logID = LoggingInit $serverName $loggingDB $friendlyServerName
 $folders = Get-ChildItem -Recurse $backupSource | ?{ $_.PSIsContainer }
+#Recurse the loop?
 foreach ($subfolder in $folders){
     try{
         #Get the most recent backup file from each subfolder
-        $f = $backupSource + $subfolder
-        $file = Get-ChildItem $f -Filter "*.bak" -recurse | sort LastWriteTime | select -last 1
+        $f = $subfolder.FullName  
+        $file = Get-ChildItem $f -Filter "*.bak" | sort LastWriteTime | select -last 1
         
         if($file -eq $null){
             continue
@@ -289,27 +301,34 @@ foreach ($subfolder in $folders){
             $logEnd = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
 
             if($errorCount -eq 0){
-                LoggingDB $serverName $loggingDB $logID $oldDbName 0 "" $logStart $logEnd
+                LoggingDB $serverName $loggingDB $backupFile $logID $oldDbName 0 "" $logStart $logEnd
             } else {
-                LoggingDB $serverName $loggingDB $logID $oldDbName 1 "" $logStart $logEnd
+                LoggingDB $serverName $loggingDB $backupFile $logID $oldDbName 1 "" $logStart $logEnd
             }
 
         } else {
             $logEnd = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
-            LoggingDB $serverName $loggingDB $logID $oldDbName 1 "Not enough Free Space" $logStart $logEnd
+            LoggingDB $serverName $loggingDB $backupFile $logID $oldDbName 1 "Not enough Free Space" $logStart $logEnd
         }
     } catch {
-        "in catch for some reason"
-        $error[0] | format-list -force
+        "in catch for some reason ... [$backupFile]"
         $logEnd = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
-        $err = $error[0] | format-list -force
 
-        LoggingDB $serverName $loggingDB $logID $oldDbName 1 "unknown error" $logStart $logEnd
+        # Capture the entire error message as a string so it can be logged.
+        # http://stackoverflow.com/questions/38419325/catching-full-exception-message
+        $e = $_.Exception
+        $errMsg = $e.Message
+        while ($e.InnerException) {
+          $e = $e.InnerException
+          $errMsg += "`n" + $e.Message
+        }
+       LoggingDB $serverName $loggingDB $backupFile $logID $oldDbName 1 $errMsg $logStart $logEnd
     }
 }
 LoggingFinalize $serverName $loggingDB $logID
 
-#$error[0] | format-list -force
+
+
 
 <#
 TODO
