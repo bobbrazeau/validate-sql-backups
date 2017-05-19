@@ -94,6 +94,13 @@ function restoreVerifyDropDatabase($ServerName, $oldDbName, $backupname, $fileIn
     
     if ($dbccResults.length -ne 0){
         $errorCount = 1 #DBCC output something ergo, errors.
+
+    #temp code on outputting results to see if it can be returned instead of a 1
+        foreach ($line in $dbccResults){
+            foreach ($col in $line) {
+                write-host $col.ItemArray
+            }
+        }
     }
     Start-Sleep -Milliseconds 1000 #delay a second to give sql server time to clean up.
 
