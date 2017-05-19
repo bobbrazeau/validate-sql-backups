@@ -292,6 +292,11 @@ foreach ($subfolder in $folders){
         #read file to get size information and other properties of the backup.
         $backupInfo = getBackupInfo $ServerName $restoreDbName $backupFile $restoreDataPath $restoreLogPath
         
+        # dbcc check against master will always fail.
+        if ($backupInfo[0].LogicalName -eq "master") {
+            continue
+        }
+        
         $oldDbName = $backupInfo[0].LogicalName
         $oldDbName
         $free = checkFreeSpace $restoreLogPath $restoreDataPath $backupInfo.LogSize $backupInfo.DataSize $freeSpaceBuffer
