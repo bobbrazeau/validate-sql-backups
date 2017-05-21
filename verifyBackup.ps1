@@ -1,49 +1,51 @@
 <#
-Set a few constants and the script will loop throuh the subfolders looking for the most recent .bak file.
-Once found it will read in the logical file name and physical location.  
-It uss the $restoreDB variable to generate new locations and names for all files
-Using that information it will restore the database moving/relocating to the new locations allowing validation of DBs on same server
-Then it will run DBCC CheckDB to detect any corruption.
-Finally it will drop the new database and start the process over for any other backup files.
+By setting a few constants the script will traverse the subfolders looking for the most recent .bak file.
+From the backup it reads the logical file name and physical location so they can be renamed and moved for the restore process.  
+Restore the backup with the new information and run DBCC CheckDB.
+Finally drop the restored database.
 
-# Inspiration
-# https://stuart-moore.com/31-days-of-sql-server-backup-and-restores-with-powershell-index/
-#
+The actions of the process are logged to a database by a trio of stored procedure calls.
+
+Inspiration - https://stuart-moore.com/31-days-of-sql-server-backup-and-restores-with-powershell-index/
 
 #>
 cls
 $error.clear()
-import-module "SQLPS" -DisableNameChecking
+
+# Import SQLPS if running on a pre-2016 SQL Server.  Use SqlServer if 2016 or later
+#import-module "SQLPS" -DisableNameChecking
+Import-Module SqlServer
 
 
-#Set Enviroment Variables
+#Set Local Enviroment Variables
 $ServerName = "(local)"
 $restoreDataPath = "B:\backupFolderData\"
 $restoreLogPath = "B:\backupFolderLog\"
 $restoreDbName = "checkdb"
 $loggingDB = "loggingDBCC"
-$freeSpaceBuffer = 200*1024*1024 #200 MB to spare
+$freeSpaceBuffer = 256*1024*1024 #256 MB extra drive space after the restore
 
-#Restore info - If an array is used, each source can have its own name
+#Restore info - TODO - use an array so backups from multiple servers can be restored.
 $backupSource =  "B:\"
 $friendlyServerName = "Test Server" #useful if multiple servers exist
 
+
 function getBackupInfo($ServerName, $restoreDbName, $backupName, $restoreDataPath, $restoreLogPath) {
-    #Restore database to get current logical and physical file info.  Create new physical path based on path variables
+    #Get info from backup file about current logical and physical file info.  Create new physical path based on path variables
     $sqlSvr = new-object Microsoft.SqlServer.Management.Smo.Server($ServerName)
     $restore = new-object Microsoft.SqlServer.Management.Smo.Restore
     $deviceType = [Microsoft.SqlServer.Management.Smo.DeviceType]::File
     $restoreDevice = New-Object -TypeName Microsoft.SQLServer.Management.Smo.BackupDeviceItem($backupName,$deviceType)
     $restore.Devices.add($restoreDevice)
 
-    #$fileData = $restore.ReadFileList($sqlSvr)
+    #databases can contain multiple data files so use an array. Keep some overall Database info and some file specific info.
     $fileData = $restore.ReadFileList($ServerName)
     $fileInfo = @{}
     $fileInfo["LogSize"] = 0
     $fileInfo["DataSize"] = 0
-    $fileInfo["Count"] = 0
-    $i = 0
+    $fileInfo["Count"] = 0 
 
+    $i = 0
     foreach($row in $fileData.Rows)
     {
         $fileInfo[$i] = @{}
@@ -52,7 +54,7 @@ function getBackupInfo($ServerName, $restoreDbName, $backupName, $restoreDataPat
         $fileInfo[$i]["Size"] = $row.Size
         $fileInfo[$i]["Type"] = $row.Type
         if($row.Type.ToString() -eq "D")
-        {  #Grab extension - multiple data files will have 1 mdf and X ndf's
+        {
             $fileInfo["DataSize"] += $row.Size
             $fileInfo[$i]["NewPhysicalName"] = $restoreDataPath + $restoreDbName + $i.toString() + [System.IO.Path]::GetExtension($row.PhysicalName)
         }
@@ -68,6 +70,7 @@ function getBackupInfo($ServerName, $restoreDbName, $backupName, $restoreDataPat
 }
 
 function restoreVerifyDropDatabase($ServerName, $oldDbName, $backupname, $fileInfo, $restoreName){
+#As it says on the tin, Restore the backup under the new information, veriy its integrity then remove it.
     $sqlsvr = new-object Microsoft.SqlServer.Management.Smo.Server($ServerName)
     $restore = new-object Microsoft.SqlServer.Management.Smo.Restore
     $devicetype = [Microsoft.SqlServer.Management.Smo.DeviceType]::File
@@ -84,46 +87,42 @@ function restoreVerifyDropDatabase($ServerName, $oldDbName, $backupname, $fileIn
         $restore.RelocateFiles.add($relocate)
     }
 
-    #$restore.sqlrestore($sqlsvr)
+    # Restore DB and run checkdb.  If errors detected save results to variable for logging purposes.
+    # Set the timeout to maxvalue (5 hours) as the default 30 seconds isn't enough time to run checkdb
     $restore.sqlrestore($ServerName)
-    # After restore verify the database is valid.
-    $errorCount = 0 -as [int]
-
     $dbccQuery = "DBCC CHECKDB ([" + $restoreDbName.ToString() + "]) WITH TABLERESULTS, NO_INFOMSGS"
     $dbccResults = Invoke-SQLCmd -ServerInstance $ServerName -Query $dbccQuery -querytimeout ([int]::MaxValue)
-    
+    $errorMessage = ""
+
+    # If checkdb is clean, there will be no results (length = 0), but if an error is encountered have to pull the message out.     
     if ($dbccResults.length -ne 0){
-        $errorCount = 1 #DBCC output something ergo, errors.
-
-    #temp code on outputting results to see if it can be returned instead of a 1
         foreach ($line in $dbccResults){
-            foreach ($col in $line) {
-                write-host $col.ItemArray
-            }
+            $errorMessage += $line.Item(3).ToString()  #Column 3 has the message - better way then referencing and id?
         }
-    }
-    Start-Sleep -Milliseconds 1000 #delay a second to give sql server time to clean up.
-
-
+    } else { $errorMessage = ""  }
     $db = New-Object -TypeName Microsoft.SqlServer.Management.Smo.Database -argumentlist $ServerName, $restoreDbName  
     $db = $sqlsvr.Databases[$restoreDbName]  
     $db.Drop()
-    return $errorCount
+
+    Start-Sleep -Milliseconds 1000 #delay a second to give sql server time to clean up.
+    return $errorMessage
 }
 
 function checkFreeSpace($logPath, $dataPath, $logUsed, $dataUsed, $buffer){
-    #Cleanup should remove the db, but there could be other activity on the drive so recalc each time
+    #Cleanup will remove the db, but there could be other activity so check before every restore
     $FSO = New-Object -Com Scripting.FileSystemObject
     $logInfo = $FSO.getdrive($(Split-Path $logPath -Qualifier))
     $logSpace = $logInfo.AvailableSpace - $buffer
 
     $dataInfo = $FSO.getdrive($(Split-Path $dataPath -Qualifier)) 
     $dataSpace = $dataInfo.AvailableSpace  - $buffer 
+
+    #if using the same drive for log and data files, add their space together
     if($logInfo.DriveLetter -eq $dataInfo.DriveLetter){
         $dataSpace = $dataSpace - $LogUsed - $dataUsed - $buffer
     } else {
-        $logSpace = $logSpace - $logUsed - $buffer
         $dataSpace = $dataSpace - $dataUsed - $buffer
+        $logSpace = $logSpace - $logUsed - $buffer
     }
     $ret = 0 
     if($logSpace -gt 0 -And $dataSpace -gt 0){
@@ -133,6 +132,7 @@ function checkFreeSpace($logPath, $dataPath, $logUsed, $dataUsed, $buffer){
 }
 
 function LoggingInit($serverName, $loggingDB, $sourceServerName){
+    #Create a record in the master table for the run.  Calls a SP which returns the ID which individual DBs reference.
     $SqlConnection = New-Object System.Data.SqlClient.SqlConnection
     $SqlConnection.ConnectionString = "Server=" + $serverName + ";Database=" + $loggingDB + ";Integrated Security=True"
     $SqlCmd = New-Object System.Data.SqlClient.SqlCommand
@@ -227,6 +227,7 @@ function LoggingDB($serverName, $loggingDB, $backupFile, $logID, $dbName, $error
 }
 
 function LoggingFinalize($serverName, $loggingDB, $logID){
+    #After all the DBs are verified, finalize the record on the master table which includes some totals and time info.
     $SqlConnection = New-Object System.Data.SqlClient.SqlConnection
     $SqlConnection.ConnectionString = "Server=" + $serverName + ";Database=" + $loggingDB + ";Integrated Security=True"
     $SqlCmd = New-Object System.Data.SqlClient.SqlCommand
@@ -250,8 +251,8 @@ function LoggingFinalize($serverName, $loggingDB, $logID){
 
 ##
 # Check out the enviroment - make sure the server can be connected and the folders exist.
-# try catch doesn't play well with SMO objects
-
+# Could have it email out a message - or depending on the error log that back to the DB server.
+##
 $sqlsvr = new-object Microsoft.SqlServer.Management.Smo.Server($ServerName)
 if ($sqlsvr.Edition  -eq $null) 
 {
@@ -283,19 +284,18 @@ elseif($sqlsvr.Databases[$loggingDB] -eq $null)
 
 $logID = LoggingInit $serverName $loggingDB $friendlyServerName
 $folders = Get-ChildItem -Recurse $backupSource | ?{ $_.PSIsContainer }
-#Recurse the loop?
+
 foreach ($subfolder in $folders){
     try{
         #Get the most recent backup file from each subfolder
-        $f = $subfolder.FullName  
-        $file = Get-ChildItem $f -Filter "*.bak" | sort LastWriteTime | select -last 1
+        $file = Get-ChildItem $subfolder.FullName -Filter "*.bak" | sort LastWriteTime | select -last 1
         
         if($file -eq $null){
             continue
         }
-        $backupFile = $f + "\" + $file
-
+        $backupFile = $subfolder.FullName + "\" + $file
         $logStart = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+
         #read file to get size information and other properties of the backup.
         $backupInfo = getBackupInfo $ServerName $restoreDbName $backupFile $restoreDataPath $restoreLogPath
         
@@ -305,19 +305,17 @@ foreach ($subfolder in $folders){
         }
         
         $oldDbName = $backupInfo[0].LogicalName
-        $oldDbName
         $free = checkFreeSpace $restoreLogPath $restoreDataPath $backupInfo.LogSize $backupInfo.DataSize $freeSpaceBuffer
         if ($free -eq 1){
-            $errorCount = restoreVerifyDropDatabase $ServerName $oldDbName $backupFile $backupInfo $restoreDbName
-            $errorCount -as [int]
+            [string]$errorMessage = ""
+            $errorMessage = restoreVerifyDropDatabase $ServerName $oldDbName $backupFile $backupInfo $restoreDbName              
             $logEnd = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
-
-            if($errorCount -eq 0){
+            #For some reason the blank string returns as "0 1 " for some reason.  Will have to review why
+            if($errorMessage.Length -lt 5){
                 LoggingDB $serverName $loggingDB $backupFile $logID $oldDbName 0 "" $logStart $logEnd
             } else {
-                LoggingDB $serverName $loggingDB $backupFile $logID $oldDbName 1 "" $logStart $logEnd
+                LoggingDB $serverName $loggingDB $backupFile $logID $oldDbName 1 $errorMessage $logStart $logEnd
             }
-
         } else {
             $logEnd = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
             LoggingDB $serverName $loggingDB $backupFile $logID $oldDbName 1 "Not enough Free Space" $logStart $logEnd
@@ -329,21 +327,16 @@ foreach ($subfolder in $folders){
         # Capture the entire error message as a string so it can be logged.
         # http://stackoverflow.com/questions/38419325/catching-full-exception-message
         $e = $_.Exception
-        $errMsg = $e.Message
+        $errorMessage = $e.Message
         while ($e.InnerException) {
           $e = $e.InnerException
-          $errMsg += "`n" + $e.Message
+          $errorMessage += "`n" + $e.Message
         }
-       LoggingDB $serverName $loggingDB $backupFile $logID $oldDbName 1 $errMsg $logStart $logEnd
+       LoggingDB $serverName $loggingDB $backupFile $logID $oldDbName 1 $errorMessage $logStart $logEnd
     }
 }
 LoggingFinalize $serverName $loggingDB $logID
 
-
-
-
 <#
-TODO
-    Error handling, try catch blocks
-    Review PS best practices around formatting, naming etc.
+    EOF
 #>
