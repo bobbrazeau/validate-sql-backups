@@ -51,11 +51,9 @@ AS
 BEGIN
 	declare @count int = 0, @checked int = 0;
 
-	select @count = sum(errors), @checked = count(*)	
+	select @count = isnull(sum(errors),0), @checked = isnull(count(*),0)	
 	from [dbo].dbccLogDetail 
 	where masterID = @id;
-
-	select @count, @checked;
 
 	update [dbo].[dbccLogMaster]
 	set errors = @count, endTime = getdate(), checkedDBs = @checked
