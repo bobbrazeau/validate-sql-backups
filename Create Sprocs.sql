@@ -1,19 +1,21 @@
 USE [loggingDBCC]
 GO
 
-/****** Object:  StoredProcedure [dbo].[dbccLogDB]    Script Date: 5/14/2017 3:28:02 PM ******/
 SET ANSI_NULLS ON
 GO
 
 SET QUOTED_IDENTIFIER ON
 GO
 
-
 -- =============================================
 -- Author:		Bob Brazeau
 -- Create date: 4/15/2017
 -- Description:	save check of each database  
 -- =============================================
+
+DROP PROCEDURE IF EXISTS [dbo].[dbccLogDB];
+GO
+
 CREATE PROCEDURE [dbo].[dbccLogDB]
 	@masterID int,
 	@dbName nvarchar(255),
@@ -29,14 +31,6 @@ BEGIN
 	values(@masterID, @dbName, @filePath, @errors, @errorMsg, @startTime, @endTime);
 END
 
-
-GO
-
-/****** Object:  StoredProcedure [dbo].[dbccLogEnd]    Script Date: 5/14/2017 3:28:02 PM ******/
-SET ANSI_NULLS ON
-GO
-
-SET QUOTED_IDENTIFIER ON
 GO
 
 
@@ -45,6 +39,8 @@ GO
 -- Create date: 4/15/2017
 -- Description:	finalize server record summing db's with errors  
 -- =============================================
+DROP PROCEDURE IF EXISTS [dbo].[dbccLogEnd];
+GO
 CREATE PROCEDURE [dbo].[dbccLogEnd]
 	@id int
 AS
@@ -63,13 +59,6 @@ END
 
 GO
 
-/****** Object:  StoredProcedure [dbo].[dbccLogStart]    Script Date: 5/14/2017 3:28:02 PM ******/
-SET ANSI_NULLS ON
-GO
-
-SET QUOTED_IDENTIFIER ON
-GO
-
 
 -- =============================================
 -- Author:		Bob Brazeau
@@ -77,6 +66,8 @@ GO
 -- Description:	verifying restores of databases using DBCC checkdb.  
 -- Initalize record at server level, endTime is set when finished
 -- =============================================
+DROP PROCEDURE IF EXISTS [dbo].[dbccLogStart];
+GO
 CREATE PROCEDURE [dbo].[dbccLogStart]
 	@serverName nvarchar(255)
 	,@id int output
