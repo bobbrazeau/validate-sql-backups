@@ -1,67 +1,85 @@
 USE [loggingDBCC]
 GO
 
-/****** Object:  Table [dbo].[dbccLogDetail]    Script Date: 5/14/2017 11:49:28 AM ******/
 SET ANSI_NULLS ON
 GO
 
 SET QUOTED_IDENTIFIER ON
 GO
 
-CREATE TABLE [dbo].[dbccLogDetail](
-	[id] [int] IDENTITY(1,1) NOT NULL,
-	[masterID] [int] NOT NULL,
-	[databaseName] [nvarchar](255) NOT NULL,
-	[filePath] [nvarchar](255) NOT NULL,
-	[errors] [smallint] NOT NULL,
-	[errMsg] [nvarchar](4000) NOT NULL,
-	[startTime] [datetime] NOT NULL,
-	[endTime] [datetime] NULL,
- CONSTRAINT [PK_loggingDetail] PRIMARY KEY CLUSTERED 
-(
-	[id] ASC
-)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
-) ON [PRIMARY]
+-- =============================================
+-- Author:		Bob Brazeau
+-- Create date: 4/15/2017
+-- Description:	save check of each database  
+-- =============================================
+
+DROP PROCEDURE IF EXISTS [dbo].[dbccLogDB];
+GO
+
+CREATE PROCEDURE [dbo].[dbccLogDB]
+	@masterID int,
+	@dbName nvarchar(255),
+	@filePath nvarchar(255),
+	@errors int,
+	@errorMsg nvarchar(4000),
+	@startTime datetime,
+	@endTime datetime
+AS
+BEGIN
+
+	insert into [dbo].dbcclogDetail (masterID, databaseName, filePath, errors, errMsg, startTime, endTime)
+	values(@masterID, @dbName, @filePath, @errors, @errorMsg, @startTime, @endTime);
+END
 
 GO
 
-/****** Object:  Table [dbo].[dbccLogMaster]    Script Date: 5/14/2017 11:49:29 AM ******/
-SET ANSI_NULLS ON
+
+-- =============================================
+-- Author:		Bob Brazeau
+-- Create date: 4/15/2017
+-- Description:	finalize server record summing db's with errors  
+-- =============================================
+DROP PROCEDURE IF EXISTS [dbo].[dbccLogEnd];
 GO
+CREATE PROCEDURE [dbo].[dbccLogEnd]
+	@id int
+AS
+BEGIN
+	declare @count int = 0, @checked int = 0;
 
-SET QUOTED_IDENTIFIER ON
-GO
+	select @count = isnull(sum(errors),0), @checked = isnull(count(*),0)	
+	from [dbo].dbccLogDetail 
+	where masterID = @id;
 
-CREATE TABLE [dbo].[dbccLogMaster](
-	[id] [int] IDENTITY(1,1) NOT NULL,
-	[ServerName] [nvarchar](255) NOT NULL,
-	[checkedDBs] [int] NOT NULL,
-	[errors] [int] NOT NULL,
-	[startTime] [datetime] NOT NULL,
-	[endTime] [datetime] NULL,
- CONSTRAINT [PK_loggingMaster] PRIMARY KEY CLUSTERED 
-(
-	[id] ASC
-)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
-) ON [PRIMARY]
+	update [dbo].[dbccLogMaster]
+	set errors = @count, endTime = getdate(), checkedDBs = @checked
+	where id = @id;
+END
 
-GO
 
-ALTER TABLE [dbo].[dbccLogDetail] ADD  CONSTRAINT [DF_loggingDetail_startTime]  DEFAULT (getdate()) FOR [startTime]
-GO
-
-ALTER TABLE [dbo].[dbccLogMaster] ADD  CONSTRAINT [DF_dbccLogMaster_checkedDBs]  DEFAULT ((0)) FOR [checkedDBs]
-GO
-
-ALTER TABLE [dbo].[dbccLogMaster] ADD  CONSTRAINT [DF_loggingMaster_startTime]  DEFAULT (getdate()) FOR [startTime]
-GO
-
-ALTER TABLE [dbo].[dbccLogDetail]  WITH CHECK ADD  CONSTRAINT [FK_loggingDetail_masterID] FOREIGN KEY([masterID])
-REFERENCES [dbo].[dbccLogMaster] ([id])
-ON DELETE CASCADE
-GO
-
-ALTER TABLE [dbo].[dbccLogDetail] CHECK CONSTRAINT [FK_loggingDetail_masterID]
 GO
 
 
+-- =============================================
+-- Author:		Bob Brazeau
+-- Create date: 4/15/2017
+-- Description:	verifying restores of databases using DBCC checkdb.  
+-- Initalize record at server level, endTime is set when finished
+-- =============================================
+DROP PROCEDURE IF EXISTS [dbo].[dbccLogStart];
+GO
+CREATE PROCEDURE [dbo].[dbccLogStart]
+	@serverName nvarchar(255)
+	,@id int output
+AS
+BEGIN
+
+	insert into [dbo].dbccLogMaster (serverName, errors, startTime)
+	values(@serverName, 0, getdate());
+
+	set @id =  SCOPE_IDENTITY() -- return ID just added.  @@Identity can get tripped up by triggers.
+	RETURN
+END
+
+
+GO
