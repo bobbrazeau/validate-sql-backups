@@ -1,4 +1,4 @@
-##############################################################################
+################################################################################
 #.SYNOPSIS
 # Script to verify backups for SQL Server and log results
 #
@@ -14,12 +14,13 @@
 # 
 # The actions of the process are logged to a database by a trio of stored procedure calls.
 #
-# Inspiration - https://stuart-moore.com/31-days-of-sql-server-backup-and-restores-with-powershell-index/
+# Inspiration - 
+#  https://stuart-moore.com/31-days-of-sql-server-backup-and-restores-with-powershell-index/
 #
 #.LINK
 # https://github.com/bobbrazeau/validate-sql-backups
 #
-##############################################################################
+################################################################################
 
 
 #Requires -Modules SqlServer
@@ -44,13 +45,15 @@ $loggingDB = "loggingDBCC"
 # 256 MB extra drive space after the restore
 $freeSpaceBuffer = 256MB 
 
-# Restore info - TODO - use an array so backups from multiple servers can be restored.
+# TODO - use an array so backups from multiple servers can be restored.
 $backupSource =  "B:\"
-$friendlyServerName = "Test Server" #useful if multiple servers exist
+$friendlyServerName = "Test Server"
+################################################################################
 
 <#
 .Synopsis         
-  Get info from backup file about current logical and physical file info.  Create new physical path based on path variables
+  Get info from backup file about current logical and physical file info.  
+  Create new physical path based on path variables
 #>
 function getBackupInfo($ServerName, $restoreDbName, $backupName, $restoreDataPath, $restoreLogPath) {
     $restore = new-object Microsoft.SqlServer.Management.Smo.Restore
@@ -188,7 +191,9 @@ function LoggingInit($serverName, $loggingDB, $sourceServerName){
     $SqlCmd.Parameters.Add($outParameter) >> $null;
 
     $SqlConnection.Open();
-    $result = $SqlCmd.ExecuteNonQuery();
+    # ExecuteNonQuery will return rows affected or -1 on error or when no rowcount is set.
+    # Either capture result into a variable or piped to null otherwise it will be in output stream.
+    $SqlCmd.ExecuteNonQuery() | out-null;
     $returnID = $SqlCmd.Parameters["@id"].Value;
     $SqlConnection.Close();
     return $returnID;
@@ -259,7 +264,7 @@ function LoggingDB($serverName, $loggingDB, $backupFile, $logID, $dbName, $error
     $SqlCmd.Parameters.Add($inEnd) >> $null;
 
     $SqlConnection.Open();
-    $SqlCmd.ExecuteNonQuery();
+    $SqlCmd.ExecuteNonQuery() | out-null;
     $SqlConnection.Close();
 }
 <#
@@ -284,15 +289,18 @@ function LoggingFinalize($serverName, $loggingDB, $logID){
     $SqlCmd.Parameters.Add($inParameter) >> $null;
 
     $SqlConnection.Open();
-    $SqlCmd.ExecuteNonQuery();
+    $SqlCmd.ExecuteNonQuery() | out-null;
     $SqlConnection.Close();
 }
 
 
 ##
-# Check out the enviroment - make sure the server can be connected and the folders exist.
+# Verify the enviroment - make sure the server is available, the folders exist etc.
 # Could have it email out a message - or depending on the error log that back to the DB server.
 ##
+
+#Changing to c drive seems to be necessary when dealing with UNC paths
+cd c: 
 $sqlsvr = new-object Microsoft.SqlServer.Management.Smo.Server($ServerName)
 if ($sqlsvr.Edition  -eq $null) 
 {
@@ -325,6 +333,10 @@ if((Test-Path $backupSource) –eq $false)
     exit
 }
 
+##
+# Start process of reading in backup files and logging results.
+#
+##
 $logID = LoggingInit $serverName $loggingDB $friendlyServerName
 $folders = Get-ChildItem -Recurse $backupSource -Directory
 
